@@ -1,7 +1,9 @@
-// Created June 11, 2015
-// Updated November 17, 2015
+// ViewTimingTestRoundtrip
 // Brian Williams
-// ViewTimingTest
+//
+// Created: June 11, 2015
+// Updated: December 21, 2015
+//
 // Developed with Couchbase Java SDK version 2.1.3 available from:
 // http://packages.couchbase.com/clients/java/2.1.3/Couchbase-Java-Client-2.1.3.zip
 //
@@ -14,10 +16,10 @@
 // Query the bucket for some of the items
 // Compare getting items individually vs. getting same items from a specific view
 
-// November Update
+// November/December Update:
 // This program has forked from its original intention which was to perform timing of view operations.
-// This update adds a more advanced View function, which inserts a time stamp into the document.
-// It also adds code to analyze the View results, and look inside the docs, Extract the time stamp, and compare it to the current time.
+// This update adds a more advanced View function, which inserts a timestamp into the document.
+// It also adds code to analyze the View results, and look inside the docs, Extract the timestamp, and compare it to the current time.
 // The goal of this is to measure the amount of time from the creation time, to when the view emitted the result, to when it was
 // actually gotten by a client.
 
@@ -26,6 +28,29 @@
 // document would suffice ) and another thread would run queries and check the time stamps, to report on the latencies, from 
 // updating the doc, to View engine emit, to actual reception by client.  And then report on the differences in real time.
 // With a gui you could plot this on a graph.
+//
+// For reference, the documents placed in the bucket look like this:
+//
+// {
+//  "name": "testDocument",
+//  "creationDate": 1450738843252,
+//  "serialNumber": 0
+// }
+//
+// The output from the view query ( each row ) looks like this
+//
+// {   "id":"testDocument0",
+//    "key":"testDocument0",
+//  "value":{
+//           "name":"testDocument",
+//           "creationDate":1450738843252,
+//           "serialNumber":0,
+//           "viewDateNow":1450738848237
+//          }
+// }
+//
+
+
 
 package com.couchbase.support;
 
@@ -49,7 +74,6 @@ import com.couchbase.client.java.view.ViewResult;
 import com.couchbase.client.java.view.ViewRow;
 import com.couchbase.client.java.bucket.BucketManager;
 import com.google.gson.Gson;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 
 public class ViewTimingTestRoundtrip {
@@ -60,9 +84,9 @@ public class ViewTimingTestRoundtrip {
 
 		Gson gson = new Gson();
 		
-		String HOSTNAME           = "192.168.1.1";       // Put your cluster IP address here
+		String HOSTNAME           = "10.4.2.121";       // Put your cluster IP address here
 		String USERNAME           = "Administrator";
-		String PASSWORD           = "password";        // Put your password here
+		String PASSWORD           = "couchbase";        // Put your password here
 		String BUCKETNAMEPREFIX   = "testBucket";
 		int    MAXBUCKETNUMBER    = 1000;        
 		
@@ -240,15 +264,15 @@ public class ViewTimingTestRoundtrip {
 		tc.performTest();
 		
 		if (tc.didExceptionOccur()) {
-			printCenteredBanner("An exception did occur");
+			printCenteredBanner(tc.getClass().getName() + ": An exception did occur");
 			tc.getException().printStackTrace();
 			System.exit(1);
 		}
 		else {
-			printCenteredBanner("An exception did not occur");
+			printCenteredBanner(tc.getClass().getName() + ": No exception occurred");
 		}
-	
-		printCenteredBanner("Elapsed time: " + tc.getElapsedTime() + " ms.");		
+			
+		printCenteredBanner(tc.getClass().getName() + ": Elapsed time: " + tc.getElapsedTime() + " ms.");		
 	}
 	
 	
