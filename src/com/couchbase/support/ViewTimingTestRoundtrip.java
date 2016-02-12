@@ -2,22 +2,29 @@
 // Brian Williams
 //
 // Created: June 11, 2015
-// Updated: December 21, 2015
+// Updated: February 12, 2016
 //
 // Developed with Couchbase Java SDK version 2.1.3 available from:
 // http://packages.couchbase.com/clients/java/2.1.3/Couchbase-Java-Client-2.1.3.zip
 //
 // Given a cluster, connect
-// Create a design document
-// Create a view
 // Create a bucket
+// Create a design document for the bucket
+// Create a view in the design document
+// Then
 // Insert data into the bucket
 // Query the view for some data
 // Query the bucket for some of the items
 // Compare getting items individually vs. getting same items from a specific view
 
+// Note:  This program does create a bucket, a design document, and a view, so you do need some
+// sufficient RAM in the server quota to accomodate this new bucket's bucket quota for RAM.
+// Otherwise you could get a "RAM quota specified is too large to be provisioned into this cluster" 
+// error message.  Also the program does not currently delete the bucket after completion.
+
 // November/December Update:
-// This program has forked from its original intention which was to perform timing of view operations.
+// This program, ViewTimingTestRoundtrip, has forked from the original program, ViewTimingTest,
+// whose intention which was to perform timing of view operations.
 // This update adds a more advanced View function, which inserts a timestamp into the document.
 // It also adds code to analyze the View results, and look inside the docs, Extract the timestamp, and compare it to the current time.
 // The goal of this is to measure the amount of time from the creation time, to when the view emitted the result, to when it was
@@ -82,12 +89,14 @@ public class ViewTimingTestRoundtrip {
 	
 	public static void main(String[] args) {
 
+		long programAbsoluteStart = System.currentTimeMillis();
+		
 		Gson gson = new Gson();
 		
-		String HOSTNAME           = "10.4.2.121";       // Put your cluster IP address here
+		String HOSTNAME           = "10.111.90.101";       // Put your cluster IP address here
 		String USERNAME           = "Administrator";
 		String PASSWORD           = "couchbase";        // Put your password here
-		String BUCKETNAMEPREFIX   = "testBucket";
+		String BUCKETNAMEPREFIX   = "testBucket";		// The actual bucket name will be, say, testBucket585
 		int    MAXBUCKETNUMBER    = 1000;        
 		
 		String DESIGNDOCUMENTNAME = "dd1";
@@ -98,7 +107,7 @@ public class ViewTimingTestRoundtrip {
 		// You can use this to emit fewer results
 		// String MAPFUNCTION        = "function (doc, meta) { if ((doc.serialNumber % 100) == 0) { doc.viewDateNow = Date.now(); emit(meta.id, doc); } } ";
 		
-		int    NUMDOCUMENTS       = 1000;				// The number of docs to create in the bucket
+		int    NUMDOCUMENTS       = 1000;				// The number of documents to create in the bucket
 		
 		// Connect to the cluster
 		CBConnectTimer ct = new CBConnectTimer(HOSTNAME);
@@ -109,7 +118,7 @@ public class ViewTimingTestRoundtrip {
 		// Come up with a bucket name and create a bucket
 		int randomIdentifier = (int) (Math.random() * MAXBUCKETNUMBER);
 		String newBucketName = BUCKETNAMEPREFIX + randomIdentifier;
-		printCenteredBanner("Bucket name is " + newBucketName);
+		printCenteredBanner("The Bucket name for this test is " + newBucketName);
 		CBCreateBucketTimer cbt = new CBCreateBucketTimer(cluster, newBucketName, USERNAME, PASSWORD);
 		runATimingClass(cbt);
 		long timeToCreateBucket = cbt.getElapsedTime();
@@ -120,7 +129,7 @@ public class ViewTimingTestRoundtrip {
 		Bucket bucket = bt.getBucket();
 		long timeToOpenBucket = bt.getElapsedTime();
 		
-		// Create a prod design document and view on the bucket
+		// Create a Prod design document and View on the Bucket
 		CBCreateDesignDocumentTimer cddt = new CBCreateDesignDocumentTimer(bucket, DESIGNDOCUMENTNAME, VIEWNAME, MAPFUNCTION);
 		runATimingClass(cddt);
 		long timeToCreateDesignDocument = cddt.getElapsedTime();
@@ -207,11 +216,14 @@ public class ViewTimingTestRoundtrip {
 		logMessage("Time to do full view query (with stale = false):         " + timeToFullViewQuery + " ms.");
 		logMessage("Time to do full view query (with stale = update_after):  " + timeToGetCompleteResultSet + " ms.");
 
-		
 		// Clean up		
 		bucket.close();
 		cluster.disconnect();
 		
+		long programAbsoluteFinish = System.currentTimeMillis();
+
+		logMessage("Total run time of this program:                          " + (programAbsoluteFinish - programAbsoluteStart) + " ms.");
+
 		
 	} // end of main()
 	
@@ -224,6 +236,7 @@ public class ViewTimingTestRoundtrip {
 
 		JsonParser jp = new JsonParser(); 
 		
+		// Deliberately unlikely values
 		long minimumDiff = 1000000;
 		long maximumDiff = 0;
 		
@@ -238,13 +251,19 @@ public class ViewTimingTestRoundtrip {
 						
 			long viewDateNow  = valueJO.get("viewDateNow").getAsLong();
 			long creationDate = valueJO.get("creationDate").getAsLong();
-			long diff = viewDateNow - creationDate;
-			System.out.println("creationDate: " + creationDate + " viewDateNow: " + viewDateNow + " diff: " + diff + " ms.");
+			long diff = viewDateNow - creationDate;   // This difference should be positive
+			System.out.println("Result #: " + resultsLookedAt 
+					+ " creationDate: " + creationDate 
+					+ " viewDateNow: "  + viewDateNow 
+					+ " difference: "   + diff + " ms.");
 			
 			if (diff < minimumDiff) { minimumDiff = diff; }
 			if (diff > maximumDiff) { maximumDiff = diff; }
 			
-			// TODO:  Compare the time stamps to right NOW
+			// Here is what this program is all about:
+			// t2 is right now.  Compare creationDate from the doc and viewDateNow from the view
+			// to right now, and report the time difference.
+			
 			long t2 = System.currentTimeMillis();
 			
 			logMessage("The item was first created " + ( t2 - creationDate) + " ms ago.");
@@ -340,7 +359,7 @@ class TimingClass {
 		stopTiming();
 	}
 	
-} // TimingClass
+} // generic TimingClass, each specific operation below is a subclass of it and implements the doTheWork() method
 
 class CBSingleGetItemsTimer extends TimingClass {
 	String[] ids;
@@ -362,7 +381,7 @@ class CBSingleGetItemsTimer extends TimingClass {
 			if (d != null) { successCount++; }
 		}
 	}
-}
+} // Given a list of specific documents, get them sequentially
 
 
 class CBConnectTimer extends TimingClass {
@@ -402,7 +421,7 @@ class CBOpenBucketTimer extends TimingClass {
 		bucket = myCluster.openBucket(bucketName);	
 	}
 	
-}
+} // Open a bucket
 
 
 class CBCreateBucketTimer extends TimingClass {
@@ -435,7 +454,7 @@ class CBCreateBucketTimer extends TimingClass {
 		
 	}
 	
-}
+} // Create a bucket
 
 
 class CBFullViewQueryTimer extends TimingClass {
@@ -547,7 +566,6 @@ class CBCreateDesignDocumentTimer extends TimingClass {
 		bm.insertDesignDocument(dd);
 	}
 	
-}
-
+} // create a design document
 
 // EOF
