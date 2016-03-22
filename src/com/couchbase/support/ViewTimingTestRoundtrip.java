@@ -3,6 +3,7 @@
 //
 // Created: June 11, 2015
 // Updated: February 12, 2016
+// Updated: March 21, 2016 - added delete test
 //
 // Developed with Couchbase Java SDK version 2.1.3 available from:
 // http://packages.couchbase.com/clients/java/2.1.3/Couchbase-Java-Client-2.1.3.zip
@@ -17,8 +18,10 @@
 // Query the bucket for some of the items
 // Compare getting items individually vs. getting same items from a specific view
 
+// TODO: A way to measure how long it takes document *deletion* to reflect in a View
+
 // Note:  This program does create a bucket, a design document, and a view, so you do need some
-// sufficient RAM in the server quota to accomodate this new bucket's bucket quota for RAM.
+// sufficient RAM in the server quota to accommodate this new bucket's bucket quota for RAM.
 // Otherwise you could get a "RAM quota specified is too large to be provisioned into this cluster" 
 // error message.  Also the program does not currently delete the bucket after completion.
 
@@ -69,7 +72,6 @@ import com.couchbase.client.java.CouchbaseCluster;
 import com.couchbase.client.java.cluster.BucketSettings;
 import com.couchbase.client.java.cluster.ClusterManager;
 import com.couchbase.client.java.cluster.DefaultBucketSettings;
-import com.couchbase.client.java.document.Document;
 import com.couchbase.client.java.document.JsonDocument;
 import com.couchbase.client.java.document.json.JsonObject;
 import com.couchbase.client.java.view.DefaultView;
@@ -86,35 +88,35 @@ import com.google.gson.JsonParser;
 public class ViewTimingTestRoundtrip {
 
 	static final int SCREENCOLUMNS = 100;	// adjust to fit your terminal
-	
+
 	public static void main(String[] args) {
 
 		long programAbsoluteStart = System.currentTimeMillis();
-		
+
 		Gson gson = new Gson();
-		
+
 		String HOSTNAME           = "10.111.90.101";       // Put your cluster IP address here
 		String USERNAME           = "Administrator";
 		String PASSWORD           = "couchbase";        // Put your password here
 		String BUCKETNAMEPREFIX   = "testBucket";		// The actual bucket name will be, say, testBucket585
 		int    MAXBUCKETNUMBER    = 1000;        
-		
+
 		String DESIGNDOCUMENTNAME = "dd1";
 		String VIEWNAME           = "vn1";
 
 		String MAPFUNCTION        = "function (doc, meta) { doc.viewDateNow = Date.now(); emit(meta.id, doc); }";
-		
+
 		// You can use this to emit fewer results
 		// String MAPFUNCTION        = "function (doc, meta) { if ((doc.serialNumber % 100) == 0) { doc.viewDateNow = Date.now(); emit(meta.id, doc); } } ";
-		
-		int    NUMDOCUMENTS       = 1000;				// The number of documents to create in the bucket
-		
+
+		int    NUMDOCUMENTS       = 100;				// The number of documents to create in the bucket
+
 		// Connect to the cluster
 		CBConnectTimer ct = new CBConnectTimer(HOSTNAME);
 		runATimingClass(ct);
 		CouchbaseCluster cluster = ct.getCluster();
 		long timeToConnect = ct.getElapsedTime();
-		
+
 		// Come up with a bucket name and create a bucket
 		int randomIdentifier = (int) (Math.random() * MAXBUCKETNUMBER);
 		String newBucketName = BUCKETNAMEPREFIX + randomIdentifier;
@@ -128,17 +130,17 @@ public class ViewTimingTestRoundtrip {
 		runATimingClass(bt);
 		Bucket bucket = bt.getBucket();
 		long timeToOpenBucket = bt.getElapsedTime();
-		
+
 		// Create a Prod design document and View on the Bucket
 		CBCreateDesignDocumentTimer cddt = new CBCreateDesignDocumentTimer(bucket, DESIGNDOCUMENTNAME, VIEWNAME, MAPFUNCTION);
 		runATimingClass(cddt);
 		long timeToCreateDesignDocument = cddt.getElapsedTime();
-				
+
 		// Insert data into the bucket
 		CBPopulateBucketTimer fbt = new CBPopulateBucketTimer(bucket, NUMDOCUMENTS);
 		runATimingClass(fbt);
 		long timeToPopulateBucket = fbt.getElapsedTime();
-		
+
 		// Get some specific items
 		String[] listOfDocumentIds = {
 				"testDocument0",
@@ -152,7 +154,7 @@ public class ViewTimingTestRoundtrip {
 				"testDocument800",
 				"testDocument900"
 		};
-		
+
 		CBSingleGetItemsTimer sgit = new CBSingleGetItemsTimer(bucket, listOfDocumentIds);
 		runATimingClass(sgit);
 		logMessage("The success count was " + sgit.getSuccessCount());
@@ -163,10 +165,10 @@ public class ViewTimingTestRoundtrip {
 		runATimingClass(fvqt2);
 		logMessage("The total results count was " + fvqt2.getTotalResults());
 		long timeToFullViewQuery = fvqt2.getElapsedTime();
-				
+
 		boolean performPollingTest = true;
 		long timeToGetCompleteResultSet = 0;  
-		
+
 		if (performPollingTest) {
 			logMessage("Performing polling test");	
 			// Query the view with Stale = Update After which is the default
@@ -175,16 +177,16 @@ public class ViewTimingTestRoundtrip {
 			CBFullViewQueryTimer fvqt1 = null;
 			int resultsSeen            = 0;
 			int expectedResults        = NUMDOCUMENTS;
-					
+
 			logMessage("I am expecting " + expectedResults + " results.  Pausing one minute.");
-			
+
 			// one minute pause
 			try {
 				Thread.sleep(60000);
 			} catch (InterruptedException e) {
 				e.printStackTrace();
 			}
-			
+
 			// Keep iterating until you get the expected results
 			while (gotExpectedResults == false) {
 				fvqt1 = new CBFullViewQueryTimer(bucket, DESIGNDOCUMENTNAME, VIEWNAME, Stale.FALSE);
@@ -196,16 +198,16 @@ public class ViewTimingTestRoundtrip {
 				} 
 				logMessage("Iteration " + iterationCount + ": The total results count was " + fvqt1.getTotalResults());
 				iterationCount++;
-				
+
 				// Analyze these results
 				analyzeTimestampsInResults(gson, fvqt1.getViewResult());
 
 			}
-			
+
 			logMessage("Got the expected results.  Done with polling test.");
 
 		}
-		
+
 		// Print Results
 		logMessage("Time to connect:                                         " + timeToConnect + " ms.");
 		logMessage("Time to create bucket:                                   " + timeToCreateBucket + " ms.");
@@ -216,30 +218,60 @@ public class ViewTimingTestRoundtrip {
 		logMessage("Time to do full view query (with stale = false):         " + timeToFullViewQuery + " ms.");
 		logMessage("Time to do full view query (with stale = update_after):  " + timeToGetCompleteResultSet + " ms.");
 
+		// Now do a polling DELETE test
+
+		// Delete an item
+		String itemToDelete = "testDocument0";
+		CBDeleteItemTimer delItem = new CBDeleteItemTimer(bucket, itemToDelete);
+		runATimingClass(delItem);
+		long timeToDelete = delItem.getElapsedTime();
+		logMessage("Time to delete:                                          " + timeToDelete + " ms.");
+
+		// Poll for results.  Is the delete reflected?
+		boolean itemDeletedYet = false;
+
+		while (itemDeletedYet == false) {
+			boolean foundTheItem = false;
+			System.out.println("Checking to see if the item appears in the full view query results...");
+			fvqt2 = new CBFullViewQueryTimer(bucket, DESIGNDOCUMENTNAME, VIEWNAME, Stale.FALSE);
+			runATimingClass(fvqt2);
+			foundTheItem = fvqt2.containsKey(itemToDelete);
+
+			if (foundTheItem) {
+				// Found the item.  Loop again.
+				System.out.println("The item appeared in the list.  NOT deleted yet.");
+			}
+			else {
+				System.out.println("The item did not appear in the list.  It IS deleted.");
+				// Didn't find the item.  We can stop now.
+				itemDeletedYet = true;
+			}
+		}
+
 		// Clean up		
 		bucket.close();
 		cluster.disconnect();
-		
+
 		long programAbsoluteFinish = System.currentTimeMillis();
 
 		logMessage("Total run time of this program:                          " + (programAbsoluteFinish - programAbsoluteStart) + " ms.");
 
-		
+
 	} // end of main()
-	
-	
+
+
 	static void analyzeTimestampsInResults(Gson gson, List<ViewRow> result) {
 
 		int resultsLookedAt = 0;
-		
+
 		printCenteredBanner("About to analyze results");
 
 		JsonParser jp = new JsonParser(); 
-		
+
 		// Deliberately unlikely values
 		long minimumDiff = 1000000;
 		long maximumDiff = 0;
-		
+
 		for (ViewRow vr : result) {
 			resultsLookedAt++;
 
@@ -248,7 +280,7 @@ public class ViewTimingTestRoundtrip {
 			// System.out.println("analyzeTimestampsInResults: " + viewValueString);
 
 			com.google.gson.JsonObject valueJO = jp.parse(viewValueString).getAsJsonObject();
-						
+
 			long viewDateNow  = valueJO.get("viewDateNow").getAsLong();
 			long creationDate = valueJO.get("creationDate").getAsLong();
 			long diff = viewDateNow - creationDate;   // This difference should be positive
@@ -256,32 +288,34 @@ public class ViewTimingTestRoundtrip {
 					+ " creationDate: " + creationDate 
 					+ " viewDateNow: "  + viewDateNow 
 					+ " difference: "   + diff + " ms.");
-			
+
 			if (diff < minimumDiff) { minimumDiff = diff; }
 			if (diff > maximumDiff) { maximumDiff = diff; }
-			
+
 			// Here is what this program is all about:
 			// t2 is right now.  Compare creationDate from the doc and viewDateNow from the view
 			// to right now, and report the time difference.
-			
+
 			long t2 = System.currentTimeMillis();
-			
+
 			logMessage("The item was first created " + ( t2 - creationDate) + " ms ago.");
 			logMessage("The view emitted its value " + ( t2 - viewDateNow)  + " ms ago.");
-			
+
 		}
 
-		logMessage("The minimum diff is: " + minimumDiff + "  ms.");
-		logMessage("The maximum diff is: " + maximumDiff + "  ms.");
+		logMessage("Note:  viewDateNow is cluster-side and creationDate is client-side.  Assuming clocks in sync.");
+
+		logMessage("The minimum (View emit - Creation time) diff is: " + minimumDiff + "  ms.");
+		logMessage("The maximum (View emit - Creation time) diff is: " + maximumDiff + "  ms.");
 		printCenteredBanner("Done with analyze results ( looked at " + resultsLookedAt + ")");
 
-		
+
 	}
-	
-	
+
+
 	static void runATimingClass(TimingClass tc) {
 		tc.performTest();
-		
+
 		if (tc.didExceptionOccur()) {
 			printCenteredBanner(tc.getClass().getName() + ": An exception did occur");
 			tc.getException().printStackTrace();
@@ -290,11 +324,11 @@ public class ViewTimingTestRoundtrip {
 		else {
 			printCenteredBanner(tc.getClass().getName() + ": No exception occurred");
 		}
-			
+
 		printCenteredBanner(tc.getClass().getName() + ": Elapsed time: " + tc.getElapsedTime() + " ms.");		
 	}
-	
-	
+
+
 	public static void printDecoration(int c, String s) {
 		for (int i = 0; i < c; i++) { System.out.print(s); }
 	}
@@ -306,46 +340,46 @@ public class ViewTimingTestRoundtrip {
 		printDecoration(numDecorations,"=");		
 		System.out.println();
 	}
-	
+
 	static void logMessage(String s) {
 		System.out.println("=== " + s + " ===");
 	}
-	
-	
+
+
 } // ViewTimingTest
 
 
 class TimingClass {
-	
+
 	long      startTime, endTime;
 	boolean   exceptionOccurred;
 	Exception caughtException;
-	
+
 	public TimingClass() {
 		startTime         = 0;
 		endTime           = 0;
 		caughtException   = null;
 		exceptionOccurred = false;
 	}
-	
+
 	public void startTiming() {		startTime = System.currentTimeMillis();    }
 	public void stopTiming()  {		endTime   = System.currentTimeMillis();    }
 
 	public long getElapsedTime() { 
 		return (endTime - startTime);
 	}
-	
+
 	public boolean didExceptionOccur() { return exceptionOccurred; }
-	
+
 	public Exception getException() { return caughtException; }
-	
+
 	// override in subclass
 	public void doTheWork() throws Exception {
 		ViewTimingTestRoundtrip.printCenteredBanner("This is where you do something");
 	}
-	
+
 	public void performTest() {
-		
+
 		ViewTimingTestRoundtrip.printCenteredBanner(this.getClass().getName());
 
 		// call the method that can be overridden
@@ -358,24 +392,24 @@ class TimingClass {
 		}
 		stopTiming();
 	}
-	
+
 } // generic TimingClass, each specific operation below is a subclass of it and implements the doTheWork() method
 
 class CBSingleGetItemsTimer extends TimingClass {
 	String[] ids;
 	Bucket bucket;
 	int successCount;
-	
+
 	public CBSingleGetItemsTimer(Bucket b, String[] idList) {
 		bucket = b;
 		ids = idList;
 		successCount = 0;
 	}
-		
+
 	public int getSuccessCount() { return successCount; }
-	
+
 	public void doTheWork() throws Exception {
-		Document d;
+		JsonDocument d;
 		for (int i = 0; i < ids.length; i++) {
 			d = bucket.get(ids[i]);
 			if (d != null) { successCount++; }
@@ -388,13 +422,13 @@ class CBConnectTimer extends TimingClass {
 
 	CouchbaseCluster sourceCluster;
 	String hostName;
-	
+
 	public CBConnectTimer(String s) {
 		hostName = s;
 	}
-	
+
 	public CouchbaseCluster getCluster() { return sourceCluster; };
-	
+
 	public void doTheWork() throws Exception {
 		sourceCluster = CouchbaseCluster.create(hostName);
 	}
@@ -404,37 +438,54 @@ class CBConnectTimer extends TimingClass {
 
 
 class CBOpenBucketTimer extends TimingClass {
-	
+
 	CouchbaseCluster myCluster;
 	Bucket bucket;
 	String bucketName;
-	
+
 	// Given a cluster and a bucket name, open the bucket
 	public CBOpenBucketTimer(CouchbaseCluster c, String bName) {
 		myCluster  = c;
 		bucketName = bName;
 	}
-	
+
 	public Bucket getBucket() { return bucket; };
-	
+
 	public void doTheWork() throws Exception {
 		bucket = myCluster.openBucket(bucketName);	
 	}
-	
+
 } // Open a bucket
+
+
+class CBDeleteItemTimer extends TimingClass {
+
+	Bucket bucket;
+	String documentKey;
+
+	public CBDeleteItemTimer(Bucket b, String docKey) {
+		bucket = b;
+		documentKey = docKey;
+	}
+
+	public void doTheWork() throws Exception {
+		bucket.remove(documentKey);
+	}
+
+}
 
 
 class CBCreateBucketTimer extends TimingClass {
 
 	// This is for bucket creation only.
-	
+
 	CouchbaseCluster myCluster;
 	String bucketName;
 	String u;
 	String p;
-	
+
 	int bucketQuota = 100; // megabytes
-	
+
 	// Given a cluster and a bucket name, open the bucket
 	public CBCreateBucketTimer(CouchbaseCluster c, String bName, String un, String pw) {
 		myCluster  = c;
@@ -442,30 +493,30 @@ class CBCreateBucketTimer extends TimingClass {
 		u = un;
 		p = pw;
 	}
-	
+
 	public void doTheWork() throws Exception {
 		DefaultBucketSettings.Builder bb = DefaultBucketSettings.builder();
 		bb.name(bucketName);
 		bb.quota(bucketQuota);
 		BucketSettings bs = bb.build();
-		
+
 		ClusterManager cm = myCluster.clusterManager(u,p);
 		cm.insertBucket(bs);
-		
+
 	}
-	
+
 } // Create a bucket
 
 
 class CBFullViewQueryTimer extends TimingClass {
-	
+
 	Bucket bucket;
 	String designDocName;
 	String viewName;
 	int totalResults;
 	Stale staleValue;
 	List<ViewRow> viewRowList;
-	
+
 	public CBFullViewQueryTimer(Bucket b, String dn, String vn, Stale stl) {
 		bucket        = b;
 		designDocName = dn;
@@ -475,9 +526,26 @@ class CBFullViewQueryTimer extends TimingClass {
 	}
 
 	public int getTotalResults() { return totalResults; }
-	
+
 	public List<ViewRow> getViewResult() { return viewRowList; }
-	
+
+	public boolean containsKey(String lookupKey) {
+		boolean foundKey = false;
+
+		String eachKey;
+
+		if (viewRowList != null) {
+			for (ViewRow row: viewRowList) {
+				eachKey = (String) row.key();
+				if (eachKey.equals(lookupKey)) {
+					foundKey = true;
+				}
+			}
+		}
+
+		return foundKey;
+	}
+
 	public void doTheWork() throws Exception {
 
 		// Perform the ViewQuery
@@ -486,42 +554,50 @@ class CBFullViewQueryTimer extends TimingClass {
 		//boolean  success = result.success();
 		//JsonObject debug = result.debug();
 		//int    totalRows = result.totalRows();
-				
+
 		viewRowList = new ArrayList<ViewRow>();
-		
+
 		// Iterate through the returned ViewRows
 		for (ViewRow row : viewResult) {
-		    System.out.println("CBFullViewQueryTimer:" + row);
-		    viewRowList.add(row);
-		    totalResults++;
+			System.out.println("CBFullViewQueryTimer:" + row);
+			viewRowList.add(row);
+			totalResults++;
 		}
 	}
-	
+
 } // CBFullViewQueryTimer
 
 
 class CBPopulateBucketTimer extends TimingClass {
-	
+
 	Bucket bucket;
 	int numDocumentsToInsert;
-	
+
 	public CBPopulateBucketTimer(Bucket b, int numDocs) {
 		bucket = b;
 		numDocumentsToInsert = numDocs;
 	}
-	
-	
+
+
 	public void doTheWork() throws Exception {
-	
+
 		String DOCUMENTNAMEPREFIX = "testDocument";
 		String jsonDocumentString = "";
 		String documentKey        = "";
 		JsonObject jsonObject     = null;
-		
-		long timeNow = System.currentTimeMillis();
-		
+
+		// TODO: Consider putting this inside the loop or not.
+		// When outside the loop, all docs will have the same creationDate
+		// On the other hand the total time to populate the bucket
+		// can be about 500-600 ms.
+
+		//long timeNow = System.currentTimeMillis();
+
 		for (int i = 0; i < numDocumentsToInsert; i++) {
-	
+
+			// test
+			long timeNow = System.currentTimeMillis();
+
 			// create a document
 			documentKey = DOCUMENTNAMEPREFIX + i;
 			jsonDocumentString = "{ \"name\" : \"testDocument\", \"serialNumber\" : " + i + ", \"creationDate\" : " + timeNow + " }";
@@ -530,42 +606,42 @@ class CBPopulateBucketTimer extends TimingClass {
 
 			// insert the document
 			bucket.insert(jsonDocument);			
-			
+
 		} // for each document
-		
+
 	} // doTheWork
-	
+
 } // populate a bucket
 
 
 
 class CBCreateDesignDocumentTimer extends TimingClass {
-	
+
 	Bucket bucket;
 	String designDocumentName;
 	String viewName;
 	String mapFunction;
-	
+
 	public CBCreateDesignDocumentTimer(Bucket b, String ddn, String vn, String mf) {
 		bucket             = b;
 		designDocumentName = ddn;
 		viewName           = vn;
 		mapFunction        = mf;
 	}
-	
+
 	public void doTheWork() throws Exception {
-		
+
 		View v = DefaultView.create(viewName, mapFunction);
-		
+
 		List<View> listOfViews = new ArrayList<View>();
 		listOfViews.add(v);
-		
+
 		DesignDocument dd = DesignDocument.create(designDocumentName, listOfViews);
-		
+
 		BucketManager bm = bucket.bucketManager();
 		bm.insertDesignDocument(dd);
 	}
-	
+
 } // create a design document
 
 // EOF
